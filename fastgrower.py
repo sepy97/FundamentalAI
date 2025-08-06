@@ -2,6 +2,8 @@ import json
 import openai
 from dotenv import load_dotenv
 import os
+import markdown
+from xhtml2pdf import pisa
 
 # Load OpenAI API key
 load_dotenv()
@@ -77,10 +79,10 @@ Here is the input:
 # Send to OpenAI API
 response = openai.chat.completions.create(
     model=MODEL,
-    messages=[
+    messages=tuple([
         {"role": "system", "content": "You are a financial analyst."},
         {"role": "user", "content": prompt}
-    ],
+    ]),  # type: ignore[arg-type]
     temperature=0.7
 )
 
@@ -94,3 +96,21 @@ output_file = "fastgrower_analysis.txt"
 with open(output_file, "w") as f:
     f.write(analysis)
     print(f"✅ Saved qualitative analysis to {output_file}")
+
+# Automated Markdown to PDF conversion
+# Convert analysis markdown to HTML
+html = markdown.markdown(analysis, extensions=['extra'])
+html = f"<html><head><meta charset='utf-8'></head><body>{html}</body></html>"
+
+# Optional: save HTML for inspection
+with open("fastgrower_analysis.html", "w", encoding="utf-8") as f:
+    f.write(html)
+
+# Generate PDF from HTML
+pdf_file = "fastgrower_analysis.pdf"
+with open(pdf_file, "wb") as f:
+    pisa_status = pisa.CreatePDF(html, dest=f)
+if pisa_status.err:
+    print("❌ Failed to generate PDF")
+else:
+    print(f"✅ Saved qualitative analysis PDF to {pdf_file}")
