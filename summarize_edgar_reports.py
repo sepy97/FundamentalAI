@@ -1,13 +1,15 @@
 import os
 import time
+import json
 import openai
 from bs4 import BeautifulSoup
-from sec_edgar_downloader import Downloader
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 # Load OpenAI API key
-load_dotenv()
-openai.api_key = os.getenv("OpenAI")
+dotenv_path = find_dotenv(usecwd=True)
+print(f"Found .env at: {dotenv_path}")
+load_dotenv(dotenv_path=dotenv_path)
+openai.api_key = os.getenv("OPENAI")
 
 print("OpenAI API key loaded")
 print(os.getenv("OPENAI"))
@@ -17,9 +19,11 @@ print("Like this")
 
 # ========== CONFIG ==========
 TICKER = "AAPL"  # ← Change this to any ticker
-DOWNLOAD_DIR = "./sec_filings"
+DOWNLOAD_DIR = "./sec-edgar-filings"
 SLEEP_BETWEEN_CALLS = 2  # seconds
 MAX_TOKEN_TEXT_CHARS = 12000  # limit input to avoid token overflow
+STALWART_FILE = "stalwart_summaries.json"
+FASTGROWER_FILE = "fastgrower_summaries.json"
 # ============================
 
 dl = Downloader(DOWNLOAD_DIR, os.getenv("Email"))
@@ -36,6 +40,8 @@ def extract_text_from_html(file_path):
 def extract_sections(text):
     lines = text.split("\n")
     lower_lines = [line.lower() for line in lines]
+    # initialize section boundaries
+    business_start = business_end = mdna_start = mdna_end = None
     business_text, mdna_text = "", ""
 
     for i, line in enumerate(lower_lines):
@@ -48,6 +54,11 @@ def extract_sections(text):
         if "item 7a." in line and "quantitative" in line:
             mdna_end = i
 
+    # if any boundary not found or invalid, return empty
+    if None in (business_start, business_end, mdna_start, mdna_end):
+        return ""
+    if business_end <= business_start or mdna_end <= mdna_start:
+        return ""
     business_text = "\n".join(lines[business_start:business_end])
     mdna_text = "\n".join(lines[mdna_start:mdna_end])
     return (business_text + "\n\n" + mdna_text).strip()
@@ -65,8 +76,8 @@ Text:
 """
 
     try:
-        resp = openai.ChatCompletion.create(
-            model="gpt-4o",
+        resp = openai.chat.completions.create(
+            model="gpt-4.1-nano",
             messages=[
                 {"role": "system", "content": "You are a financial analyst summarizing SEC filings."},
                 {"role": "user", "content": prompt}
@@ -79,41 +90,44 @@ Text:
 # Unified summarization logic
 def summarize_filings(ticker, form_type, limit, label):
     summaries = []
-    path = os.path.join(DOWNLOAD_DIR, "SEC-Edgar-Data", ticker.upper(), form_type)
-    files = sorted([f for f in os.listdir(path) if f.endswith(".txt")], reverse=True)[:limit]
+    # walk pre-populated local filings
+    root_dir = os.path.join(DOWNLOAD_DIR, ticker.upper(), form_type)
+    file_paths = []
+    for root, _, files in os.walk(root_dir):
+        for fname in files:
+            if fname.endswith(".txt"):
+                file_paths.append(os.path.join(root, fname))
+    file_paths = sorted(file_paths, reverse=True)[:limit]
 
-    for f in files:
+    for file_path in file_paths:
         try:
-            print(f"Processing {label} - {f}")
-            period = f.split("_")[0]
-            raw = extract_text_from_html(os.path.join(path, f))
+            print(f"Processing {label} - {file_path}")
+            period = os.path.basename(os.path.dirname(file_path))
+            raw = extract_text_from_html(file_path)
             section = extract_sections(raw)
             summary = summarize_section(section, period, form_type)
-            summaries.append({ "period": period, "summary": summary })
+            key = "year" if form_type == "10-K" and label == "10-K" else "quarter"
+            summaries.append({ key: period, "summary": summary })
             time.sleep(SLEEP_BETWEEN_CALLS)
         except Exception as e:
-            print(f"Error processing {f}: {e}")
+            print(f"Error processing {file_path}: {e}")
     return summaries
 
-# Run for stalwart (10-Ks)
+# Summarize 10-Ks for stalwart
 print("\n🧱 Summarizing 10-Ks for stalwart analysis...")
 stalwart_summaries = summarize_filings(TICKER, "10-K", 10, "10-K")
 
-# Run for fast-grower (recent 10-Qs + 10-Ks combined)
+# Summarize 10-Qs + recent 10-Ks for fast-grower
 print("\n🚀 Summarizing 10-Ks and 10-Qs for fast-grower analysis...")
 fastgrower_10qs = summarize_filings(TICKER, "10-Q", 10, "10-Q")
-fastgrower_10ks = summarize_filings(TICKER, "10-K", 3, "10-K")  # Add a few annuals too
-fastgrower_summaries = sorted(fastgrower_10qs + fastgrower_10ks, key=lambda x: x["period"], reverse=True)[:10]
+fastgrower_10ks = summarize_filings(TICKER, "10-K", 3, "Recent 10-Ks")  # include a few annuals
+fastgrower_combined = sorted(fastgrower_10qs + fastgrower_10ks, key=lambda x: x.get("quarter", x.get("year")), reverse=True)[:10]
 
-# Output summaries
-print("\n\n🧱 FINAL STALWART SUMMARY INPUT (10 Years):")
-print("[")
-for s in sorted(stalwart_summaries, key=lambda x: x["period"]):
-    print(f'  {{ "year": "{s["period"]}", "summary": """{s["summary"]}""" }},')
-print("]")
+# Save to JSON files
+with open(STALWART_FILE, "w") as f:
+    json.dump(stalwart_summaries, f, indent=2)
+    print(f"\n✅ Saved stalwart summaries to {STALWART_FILE}")
 
-print("\n🚀 FINAL FAST-GROWER SUMMARY INPUT (Last 10 Quarters):")
-print("[")
-for s in sorted(fastgrower_summaries, key=lambda x: x["period"]):
-    print(f'  {{ "quarter": "{s["period"]}", "summary": """{s["summary"]}""" }},')
-print("]")
+with open(FASTGROWER_FILE, "w") as f:
+    json.dump(fastgrower_combined, f, indent=2)
+    print(f"✅ Saved fast-grower summaries to {FASTGROWER_FILE}")
