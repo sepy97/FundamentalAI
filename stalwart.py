@@ -29,36 +29,49 @@ formatted_data = format_summaries(summaries)
 
 # Compose the full prompt
 prompt = f"""
-You are a long-term investor analyzing a large, stable company over a 10-year period.
+You are a long-term investor analyzing a large, established company (a stalwart) over a 10-year period.
 
-Here are yearly summaries from the company’s 10-K reports (2015–2024), focusing on their business description, management commentary, and risk factors.
+Here are yearly summaries from the company’s 10-K reports (2015–2024), including business description, management commentary, financial health, and risk factors.
 
-Using this data, provide a detailed qualitative assessment:
+Use this information to assess the company's quality, stability, and investment potential. Pay particular attention to the following:
+
+---
 
 1. **Business Consistency**  
-   - Has the company stayed focused on its core business model?
-   - Did it pivot strategies or stay disciplined?
+   - Has the company maintained focus on its core business?
+   - Any unrelated acquisitions or signs of “diworseification”?
+   - Are there credible new product lines, or is innovation stalling?
 
 2. **Operational Efficiency & Capital Allocation**  
-   - How has management discussed cost control, profitability, and reinvestment?
-   - Is there evidence of prudent capital use (R&D, M&A, dividends/buybacks)?
+   - Has the company been efficient in cost control and reinvestment?
+   - Are capital returns strong (buybacks, dividends, R&D)?
+   - Is debt rising due to large acquisitions?
 
 3. **Stability and Resilience**  
-   - How did the company perform during downturns (e.g., COVID)?
-   - Are there signs of competitive erosion or defensive strength?
+   - How did the company behave during recessions or market downturns?
+   - Did core divisions stay profitable or suffer?
+   - Are insiders (executives/directors) buying shares or not?
 
-4. **Moat and Competitive Position**  
-   - Has the company defended its market position effectively?
-   - Are there signs of commoditization, disruption, or sustained dominance?
+4. **Valuation and Growth Signals**  
+   - Is the P/E (or valuation) low relative to history?
+   - Are there signs of accelerating growth or strategic expansion?
+   - Are new products close to market, or are launches delayed?
 
-5. **Growth Outlook**  
-   - Is the company still growing meaningfully?
-   - Are growth areas consistent with long-term secular trends?
+---
 
-Finally, summarize:
-- Is this company a strong long-term “stalwart” investment?
-- What are the key risks or red flags?
-- Would you **Buy, Hold, or Avoid** based on this 10-year qualitative profile?
+### 🔎 Evaluate the following SELL SIGNALS:
+- P/E has significantly increased without earnings growth.
+- Cost cuts failed to restore growth.
+- Major division is exposed to macroeconomic weakness.
+- Insiders did not buy stock over the past year.
+- New product announcements have not materialized.
+
+---
+
+### 📈 Finally, conclude:
+- Is this company a strong long-term stalwart?
+- What are the key **risks, red flags**, or **catalysts**?
+- Based on this profile, would you **Buy, Hold, or Avoid**?
 
 Here is the input:
 {formatted_data}

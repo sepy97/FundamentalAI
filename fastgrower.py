@@ -29,36 +29,46 @@ formatted_data = format_summaries(summaries)
 
 # Compose full prompt
 prompt = f"""
-You are evaluating a potential fast-growing stock investment based on recent company performance.
+You are analyzing a fast-growing company based on recent 10-K and 10-Q summaries (last 10 quarters). These include management discussions of growth, strategy, operations, and risks.
 
-Here are summaries from the last 10 quarters of 10-Q and 10-K reports (about 2.5 years of data). These include management discussions of growth, operations, market strategy, and financial performance.
+Use this information to evaluate whether the company qualifies as a legitimate “fast-grower” with long-term upside.
 
-Using this data, provide a detailed qualitative evaluation:
+---
 
 1. **Growth Momentum**  
-   - What are the main drivers of revenue and earnings growth?
+   - Are quarterly earnings consistently increasing?
+   - Is profitability improving alongside revenue?
    - Is growth accelerating, decelerating, or plateauing?
 
-2. **Product & Market Expansion**  
-   - Is the company entering new markets or expanding its TAM?
-   - Are new products or business lines emerging?
+2. **Expansion Quality & Market Fit**  
+   - Has the company proven success in more than one geography or vertical?
+   - Are expansion efforts scaling up (speed, repeatability)?
+   - Does the lead product significantly impact overall revenue?
 
-3. **Scalability & Efficiency**  
-   - Is the business showing signs of operating leverage or improving margins?
-   - Are there challenges with hiring, delivery, or logistics?
+3. **Scalability & Capital Discipline**  
+   - Is operating leverage emerging (margin improvement)?
+   - Is debt moderate and well-managed?
+   - Are they investing in scalable growth (not just advertising)?
 
-4. **Capital Allocation & Cash Burn**  
-   - How responsibly is the company spending (vs. burning) cash?
-   - Is there a clear plan for profitability?
+4. **Moat Development & Visibility**  
+   - Is there evidence of a durable competitive edge (tech, brand, network)?
+   - Has Wall Street noticed this company yet (low analyst/institutional attention)?
 
-5. **Durability of Advantage**  
-   - Are there signs of a developing moat (brand, tech, distribution)?
-   - Is the company defending its lead against competitors?
+---
 
-Finally, summarize:
-- Does this company look like a credible fast-grower with 5–10x upside?
-- What are the biggest risks (macro, competitive, internal)?
-- Would you **Buy, Monitor, or Avoid** based on this qualitative trajectory?
+### 🚩 Check for SELL SIGNALS:
+- The company’s valuation (P/E > 30) is not justified by forward growth (<20%).
+- Company has become too recognizable (e.g., heavily advertised, media buzz).
+- Executive turnover is high.
+- Top-line growth is slowing, and profit guidance is reduced.
+- Analysts increasingly covering the stock; fast-grower phase may be ending.
+
+---
+
+### 🧠 Summary:
+- Is this still a **credible 5–10x fast-grower**?
+- What are the major **risks, turning points, or hype signals**?
+- Would you **Buy, Hold, or Avoid**?
 
 Here is the input:
 {formatted_data}
