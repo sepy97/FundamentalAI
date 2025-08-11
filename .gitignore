@@ -211,3 +211,4 @@ __marimo__/
 
 # Directory with collected files
 reports/
+/analysis_outputs/
