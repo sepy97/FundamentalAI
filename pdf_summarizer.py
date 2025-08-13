@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-PDF Financial Report Summarizer
-Processes all PDF files in the reports directory and creates comprehensive summaries
-focused on business updates and financial performance.
+Refactored PDF Summarizer
+Uses centralized configuration and prompt management instead of hardcoded values.
 """
 
 import os
@@ -12,28 +11,32 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 import PyPDF2
 import openai
-from dotenv import load_dotenv
 import markdown
 from xhtml2pdf import pisa
 import re
 from datetime import datetime
+import logging
 
-# Load environment variables
-load_dotenv()
-openai.api_key = os.getenv("OPENAI")
+from config_manager import config
+from prompt_manager import prompt_manager
 
-# Configuration
-REPORTS_DIR = Path("reports")
-OUTPUT_DIR = Path("analysis_outputs")
-OUTPUT_DIR.mkdir(exist_ok=True)
-MODEL = "gpt-5-nano"
-SLEEP_BETWEEN_CALLS = 2  # seconds
-MAX_CHARS_PER_CHUNK = 15000  # Limit for token management
+logger = logging.getLogger(__name__)
 
 class PDFSummarizer:
+    """Processes PDF files and creates AI-powered summaries using configuration"""
+
     def __init__(self):
-        self.summaries = {}
-        self.reports_processed = 0
+        self.ai_config = config.ai
+        self.directories = config.directories
+        self.filing_config = config.filings
+
+        # Set up OpenAI
+        if self.ai_config.api_key:
+            openai.api_key = self.ai_config.api_key
+        else:
+            raise ValueError("OpenAI API key not found in environment variables")
+
+        self.summaries_created = 0
 
     def extract_text_from_pdf(self, pdf_path: Path) -> str:
         """Extract text content from PDF file."""
@@ -45,67 +48,79 @@ class PDFSummarizer:
                     text += page.extract_text() + "\n"
                 return text
         except Exception as e:
-            print(f"Error reading PDF {pdf_path}: {e}")
+            logger.error(f"Error reading PDF {pdf_path}: {e}")
             return ""
 
     def parse_filename_info(self, filename: str) -> Tuple[str, str, str]:
         """Extract date, ticker, and filing type from filename."""
-        # Expected format: YYYYMMDD_ticker_filingtype.pdf (e.g., 20151028_aapl_10k.pdf)
         match = re.match(r'(\d{8})_([a-zA-Z]+)_([a-zA-Z0-9]+)\.pdf', filename)
         if match:
             date_str, ticker, filing_type = match.groups()
-            # Convert date format
             date_obj = datetime.strptime(date_str, '%Y%m%d')
             period = date_obj.strftime('%Y-%m-%d')
-            # Normalize filing type to uppercase with hyphens
+
+            # Normalize filing type
             filing_type_normalized = filing_type.upper()
             if filing_type_normalized == "10K":
                 filing_type_normalized = "10-K"
             elif filing_type_normalized == "10Q":
                 filing_type_normalized = "10-Q"
+
             return period, ticker.upper(), filing_type_normalized
+
         return "unknown", "unknown", "unknown"
 
-    def create_basic_prompt(self, text: str, period: str, filing_type: str, ticker: str) -> str:
-        """Create basic prompt for document summarization."""
-
-        prompt = f"""Summarize this {filing_type} filing for {ticker} from {period}. Focus on:
-1. Business or operational updates
-2. Management tone and strategic messaging
-3. Notable changes or risks
-4. Performance or guidance signals
-
-Keep the summary concise but comprehensive, highlighting the most important information for investors.
-
-Filing Content:
-{text[:MAX_CHARS_PER_CHUNK]}
-"""
-        return prompt
-
     def summarize_document(self, text: str, period: str, filing_type: str, ticker: str) -> str:
-        """Generate AI summary using basic prompt."""
-        prompt = self.create_basic_prompt(text, period, filing_type, ticker)
-
+        """Generate AI summary using centralized prompt management."""
         try:
+            prompt = prompt_manager.get_template(
+                "basic_summary",
+                filing_type=filing_type,
+                ticker=ticker,
+                period=period,
+                content=text[:self.ai_config.max_chars_per_chunk]
+            )
+
             response = openai.chat.completions.create(
-                model=MODEL,
+                model=self.ai_config.summarization_model,
                 messages=[
-                    {"role": "system", "content": "You are a financial analyst summarizing SEC filings. Provide clear, concise summaries focusing on key business updates, financial performance, and notable changes."},
+                    {
+                        "role": "system",
+                        "content": "You are a financial analyst summarizing SEC filings. Provide clear, concise summaries focusing on key business updates, financial performance, and notable changes."
+                    },
                     {"role": "user", "content": prompt}
                 ],
+                max_completion_tokens=self.ai_config.max_completion_tokens,
+                #temperature=self.ai_config.temperature # current model does not use temperature
             )
+
             return response.choices[0].message.content.strip()
+
         except Exception as e:
-            return f"[ERROR in summarization]: {e}"
+            logger.error(f"Error in summarization: {e}")
+            # Try with alternative model
+            try:
+                response = openai.chat.completions.create(
+                    model=self.ai_config.alternative_model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a financial analyst summarizing SEC filings."
+                        },
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e2:
+                return f"[ERROR in summarization]: {e2}"
 
-    def process_company_pdfs(self, company_dir: Path) -> Dict:
-        """Process all PDF files for a single company and create two separate analyses."""
+    def process_company_pdfs(self, company_dir: Path) -> Tuple[Dict, Dict]:
+        """Process all PDF files for a single company and create analyses."""
         ticker = company_dir.name.upper()
-
         pdf_files = list(company_dir.glob("*.pdf"))
-        pdf_files.sort()  # Sort by filename (date)
+        pdf_files.sort()
 
-        print(f"\n📊 Processing {len(pdf_files)} PDF files for {ticker}...")
+        logger.info(f"Processing {len(pdf_files)} PDF files for {ticker}...")
 
         # Separate files by type
         k_files = []
@@ -113,25 +128,25 @@ Filing Content:
 
         for pdf_file in pdf_files:
             period, file_ticker, filing_type = self.parse_filename_info(pdf_file.name)
-            if filing_type == "10-K":
+            if filing_type == self.filing_config.annual_type:
                 k_files.append((pdf_file, period, filing_type))
-            elif filing_type == "10-Q":
+            elif filing_type == self.filing_config.quarterly_type:
                 q_files.append((pdf_file, period, filing_type))
 
         # Sort by date (most recent first)
         k_files.sort(key=lambda x: x[1], reverse=True)
         q_files.sort(key=lambda x: x[1], reverse=True)
 
-        # Create stalwart analysis (last 10 years of 10-K reports)
+        # Create stalwart analysis data
         stalwart_data = {
             "ticker": ticker,
             "analysis_type": "stalwart_10_years",
             "reports": []
         }
 
-        print(f"  📈 Processing last 10 years (10-K reports) for stalwart analysis...")
-        for pdf_file, period, filing_type in k_files[:10]:  # Last 10 years
-            print(f"    📄 Processing: {pdf_file.name}")
+        logger.info(f"Processing last {self.filing_config.stalwart_years} years (10-K reports) for stalwart analysis...")
+        for pdf_file, period, filing_type in k_files[:self.filing_config.stalwart_years]:
+            logger.debug(f"Processing: {pdf_file.name}")
             text = self.extract_text_from_pdf(pdf_file)
             if text.strip():
                 summary = self.summarize_document(text, period, filing_type, ticker)
@@ -141,21 +156,21 @@ Filing Content:
                     "filing_type": filing_type,
                     "summary": summary
                 })
-                self.reports_processed += 1
-                time.sleep(SLEEP_BETWEEN_CALLS)
+                self.summaries_created += 1
+                time.sleep(self.ai_config.sleep_between_calls)
 
-        # Create fast-grower analysis (last 10 quarters: 10-Q + recent 10-K)
+        # Create fast-grower analysis data
         fastgrower_data = {
             "ticker": ticker,
             "analysis_type": "fastgrower_10_quarters",
             "reports": []
         }
 
-        print(f"  🚀 Processing last 10 quarters (10-Q + recent 10-K) for fast-grower analysis...")
+        logger.info(f"Processing last {self.filing_config.fastgrower_quarters} quarters for fast-grower analysis...")
 
-        # Add last 10 quarters (10-Q reports)
-        for pdf_file, period, filing_type in q_files[:10]:  # Last 10 quarters
-            print(f"    📄 Processing: {pdf_file.name}")
+        # Add quarterly reports
+        for pdf_file, period, filing_type in q_files[:self.filing_config.fastgrower_quarters]:
+            logger.debug(f"Processing: {pdf_file.name}")
             text = self.extract_text_from_pdf(pdf_file)
             if text.strip():
                 summary = self.summarize_document(text, period, filing_type, ticker)
@@ -165,12 +180,12 @@ Filing Content:
                     "filing_type": filing_type,
                     "summary": summary
                 })
-                self.reports_processed += 1
-                time.sleep(SLEEP_BETWEEN_CALLS)
+                self.summaries_created += 1
+                time.sleep(self.ai_config.sleep_between_calls)
 
-        # Add last 3 annual reports (10-K) for context
-        for pdf_file, period, filing_type in k_files[:3]:  # Last 3 years
-            print(f"    📄 Processing: {pdf_file.name}")
+        # Add context annual reports
+        for pdf_file, period, filing_type in k_files[:self.filing_config.fastgrower_context_years]:
+            logger.debug(f"Processing: {pdf_file.name}")
             text = self.extract_text_from_pdf(pdf_file)
             if text.strip():
                 summary = self.summarize_document(text, period, filing_type, ticker)
@@ -180,50 +195,59 @@ Filing Content:
                     "filing_type": filing_type,
                     "summary": summary
                 })
-                self.reports_processed += 1
-                time.sleep(SLEEP_BETWEEN_CALLS)
+                self.summaries_created += 1
+                time.sleep(self.ai_config.sleep_between_calls)
 
-        # Sort fastgrower reports by date (most recent first)
+        # Sort fastgrower reports by date
         fastgrower_data["reports"].sort(key=lambda x: x["period"], reverse=True)
 
         return stalwart_data, fastgrower_data
 
-    def save_company_analysis(self, stalwart_data: Dict, fastgrower_data: Dict):
-        """Save both stalwart and fast-grower analysis results."""
-        ticker = stalwart_data["ticker"]
-
-        # Save Stalwart Analysis (10 years)
-        print(f"💾 Saving 10-year stalwart analysis for {ticker}...")
-        self.save_analysis_files(stalwart_data, "stalwart_10_years")
-
-        # Save Fast-grower Analysis (10 quarters)
-        print(f"💾 Saving 10-quarter fast-grower analysis for {ticker}...")
-        self.save_analysis_files(fastgrower_data, "fastgrower_10_quarters")
-
     def save_analysis_files(self, data: Dict, analysis_type: str):
-        """Save analysis files for a specific analysis type."""
+        """Save analysis files using configured formats and naming."""
         ticker = data["ticker"]
+        filename_pattern = config.get_file_naming_pattern("summary")
+        filename_base = filename_pattern.format(ticker=ticker.lower(), analysis_type=analysis_type)
 
-        # Create filenames based on analysis type
-        filename_base = f"{ticker.lower()}_{analysis_type}"
+        output_formats = config.get_output_formats()
 
         # Save JSON
-        json_file = OUTPUT_DIR / f"{filename_base}.json"
-        with open(json_file, 'w') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        if "json" in output_formats:
+            json_file = self.directories.analysis_outputs / f"{filename_base}.json"
+            with open(json_file, 'w') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
 
-        # Create markdown report
-        markdown_content = self.create_markdown_report(data, analysis_type)
+        # Create and save markdown
+        if "markdown" in output_formats:
+            markdown_content = self.create_markdown_report(data, analysis_type)
+            md_file = self.directories.analysis_outputs / f"{filename_base}.md"
+            with open(md_file, 'w') as f:
+                f.write(markdown_content)
 
-        # Save markdown
-        md_file = OUTPUT_DIR / f"{filename_base}.md"
-        with open(md_file, 'w') as f:
-            f.write(markdown_content)
+        # Convert to HTML and PDF if requested
+        if "html" in output_formats or "pdf" in output_formats:
+            html_content = markdown.markdown(markdown_content, extensions=['extra', 'tables'])
+            title = f"{ticker} {'10-Year Stalwart' if 'stalwart' in analysis_type else '10-Quarter Fast-Grower'} Summary"
+            html_full = self._create_html_document(html_content, title, analysis_type)
 
-        # Convert to HTML and PDF
-        html_content = markdown.markdown(markdown_content, extensions=['extra', 'tables'])
-        title = f"{ticker} {'10-Year Stalwart' if 'stalwart' in analysis_type else '10-Quarter Fast-Grower'} Summary"
-        html_full = f"""
+            if "html" in output_formats:
+                html_file = self.directories.analysis_outputs / f"{filename_base}.html"
+                with open(html_file, 'w', encoding='utf-8') as f:
+                    f.write(html_full)
+
+            if "pdf" in output_formats:
+                pdf_file = self.directories.analysis_outputs / f"{filename_base}.pdf"
+                with open(pdf_file, 'wb') as f:
+                    pisa.CreatePDF(html_full, dest=f)
+
+        analysis_name = "10-Year Stalwart Analysis" if "stalwart" in analysis_type else "10-Quarter Fast-Grower Analysis"
+        logger.info(f"Saved {analysis_name} for {ticker}")
+
+    def _create_html_document(self, content: str, title: str, analysis_type: str) -> str:
+        """Create full HTML document with styling."""
+        style_class = "stalwart" if "stalwart" in analysis_type else "fastgrower"
+
+        return f"""
         <html>
         <head>
             <meta charset="utf-8">
@@ -239,29 +263,12 @@ Filing Content:
                 th {{ background-color: #f2f2f2; }}
             </style>
         </head>
-        <body>{html_content}</body>
+        <body class="{style_class}">{content}</body>
         </html>
         """
 
-        # Save HTML
-        html_file = OUTPUT_DIR / f"{filename_base}.html"
-        with open(html_file, 'w', encoding='utf-8') as f:
-            f.write(html_full)
-
-        # Generate PDF
-        pdf_file = OUTPUT_DIR / f"{filename_base}.pdf"
-        with open(pdf_file, 'wb') as f:
-            pisa_status = pisa.CreatePDF(html_full, dest=f)
-
-        analysis_name = "10-Year Stalwart Analysis" if "stalwart" in analysis_type else "10-Quarter Fast-Grower Analysis"
-        print(f"✅ Saved {analysis_name} for {ticker}:")
-        print(f"   📄 JSON: {json_file}")
-        print(f"   📝 Markdown: {md_file}")
-        print(f"   🌐 HTML: {html_file}")
-        print(f"   📄 PDF: {pdf_file}")
-
     def create_markdown_report(self, data: Dict, analysis_type: str) -> str:
-        """Create formatted markdown report for specific analysis type."""
+        """Create formatted markdown report."""
         ticker = data["ticker"]
         reports = data["reports"]
 
@@ -301,9 +308,14 @@ Filing Content:
 
 """
 
-        md_content += f"""## Analysis Methodology
+        md_content += self._get_methodology_text(analysis_type)
+        return md_content
 
-This {analysis_type.replace('_', ' ').title()} analysis summarizes key aspects of SEC filings, focusing on:
+    def _get_methodology_text(self, analysis_type: str) -> str:
+        """Get methodology text for the analysis type."""
+        base_text = """## Analysis Methodology
+
+This analysis summarizes key aspects of SEC filings, focusing on:
 
 - **Business Updates**: Important operational changes and strategic initiatives
 - **Financial Performance**: Revenue, earnings, and key financial metrics trends
@@ -314,107 +326,45 @@ This {analysis_type.replace('_', ' ').title()} analysis summarizes key aspects o
 """
 
         if "stalwart" in analysis_type:
-            md_content += """
-- **10-K Annual Reports**: Last 10 years of comprehensive annual filings
+            criteria = f"""
+- **10-K Annual Reports**: Last {self.filing_config.stalwart_years} years of comprehensive annual filings
 - **Long-term Focus**: Emphasis on consistency, stability, and sustainable business practices
 - **Historical Trends**: Multi-year patterns in performance and strategic direction
 """
         else:
-            md_content += """
-- **10-Q Quarterly Reports**: Last 10 quarters for recent performance trends
-- **Recent 10-K Reports**: Last 3 annual reports for comprehensive context
+            criteria = f"""
+- **10-Q Quarterly Reports**: Last {self.filing_config.fastgrower_quarters} quarters for recent performance trends
+- **Recent 10-K Reports**: Last {self.filing_config.fastgrower_context_years} annual reports for comprehensive context
 - **Growth Focus**: Emphasis on recent momentum, quarterly improvements, and acceleration
 - **Short-term Trends**: Quarterly patterns and recent strategic developments
 """
 
-        md_content += """
+        return base_text + criteria + """
 ---
 
 *This summary is based on publicly available SEC filings. Please consult with a qualified financial advisor for investment decisions.*
 """
 
-        return md_content
-
-    def process_specific_company(self, ticker: str):
-        """Process PDF files for a specific company ticker."""
-        company_dir = REPORTS_DIR / ticker.lower()
+    def process_company(self, ticker: str) -> bool:
+        """Process a single company's PDFs and create summaries."""
+        company_dir = self.directories.reports / ticker.lower()
 
         if not company_dir.exists():
-            print(f"❌ Company directory {company_dir} not found!")
-            print(f"Available companies: {[d.name for d in REPORTS_DIR.iterdir() if d.is_dir()]}")
-            return
-
-        print(f"🚀 Analyzing company: {ticker.upper()}")
-        print(f"{'='*60}")
+            logger.error(f"Company directory {company_dir} not found!")
+            return False
 
         try:
             stalwart_data, fastgrower_data = self.process_company_pdfs(company_dir)
+
             if stalwart_data["reports"] or fastgrower_data["reports"]:
-                self.save_company_analysis(stalwart_data, fastgrower_data)
-                print(f"\n✅ Analysis complete for {ticker.upper()}!")
-                print(f"📊 Processed {self.reports_processed} reports")
-                print(f"📁 Files saved to: {OUTPUT_DIR}")
+                self.save_analysis_files(stalwart_data, "stalwart_10_years")
+                self.save_analysis_files(fastgrower_data, "fastgrower_10_quarters")
+                logger.info(f"Successfully processed {self.summaries_created} summaries for {ticker}")
+                return True
             else:
-                print(f"⚠️ No valid reports found for {ticker}")
+                logger.warning(f"No valid reports found for {ticker}")
+                return False
+
         except Exception as e:
-            print(f"❌ Error processing {ticker}: {e}")
-
-    def process_all_companies(self):
-        """Process all companies in the reports directory."""
-        if not REPORTS_DIR.exists():
-            print(f"❌ Reports directory {REPORTS_DIR} not found!")
-            return
-
-        company_dirs = [d for d in REPORTS_DIR.iterdir() if d.is_dir()]
-
-        if not company_dirs:
-            print("❌ No company directories found in reports folder!")
-            return
-
-        print(f"🚀 Found {len(company_dirs)} companies to analyze...")
-
-        for company_dir in company_dirs:
-            print(f"\n{'='*60}")
-            print(f"🏢 Analyzing company: {company_dir.name.upper()}")
-            print(f"{'='*60}")
-
-            try:
-                stalwart_data, fastgrower_data = self.process_company_pdfs(company_dir)
-                if stalwart_data["reports"] or fastgrower_data["reports"]:
-                    self.save_company_analysis(stalwart_data, fastgrower_data)
-                else:
-                    print(f"⚠️ No valid reports found for {company_dir.name}")
-            except Exception as e:
-                print(f"❌ Error processing {company_dir.name}: {e}")
-
-        print(f"\n🎉 Analysis complete! Processed {self.reports_processed} reports total.")
-        print(f"📁 All analysis files saved to: {OUTPUT_DIR}")
-
-def main():
-    """Main execution function."""
-    print("📊 PDF Financial Report Summarizer")
-    print("=" * 60)
-
-    # Check if OpenAI API key is available
-    if not openai.api_key:
-        print("❌ OpenAI API key not found! Please set OPENAI environment variable.")
-        return
-
-    # ========== CONFIGURATION ==========
-    # Set the ticker symbol for the company you want to analyze
-    TICKER = "AAPL"  # Change this to analyze a different company
-    # Alternatively, set to None to analyze all companies
-    # TICKER = None
-    # ===================================
-
-    summarizer = PDFSummarizer()
-
-    if TICKER:
-        # Analyze specific company
-        summarizer.process_specific_company(TICKER)
-    else:
-        # Analyze all companies
-        summarizer.process_all_companies()
-
-if __name__ == "__main__":
-    main()
+            logger.error(f"Error processing {ticker}: {e}")
+            return False

@@ -1,0 +1,79 @@
+# Financial Analysis Configuration
+app:
+  name: "FundamentalAI"
+  version: "1.0.0"
+
+# Company and Filing Configuration
+companies:
+  default_ticker: "PFE"
+  batch_tickers: ["PFE", "AAPL", "AMZN", "CROX"]  # List of tickers to process in batch mode
+
+filings:
+  types:
+    annual: "10-K"
+    quarterly: "10-Q"
+  counts:
+    stalwart_years: 10
+    fastgrower_quarters: 10
+    fastgrower_context_years: 3
+
+# SEC API Configuration
+sec:
+  base_urls:
+    company_tickers: "https://www.sec.gov/files/company_tickers.json"
+    submissions: "https://data.sec.gov/submissions/CIK{cik}.json"
+    archives: "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{document}"
+  user_agent: "FundamentalAI Bot/1.0 (pyankovinvest@gmail.com)"
+  request_timeout: 30
+  rate_limit_delay: 1.0
+
+# PDF Generation Configuration
+pdf:
+  wait_after_load: 1.0
+  paper_format: "letter"
+  print_background: true
+  viewport:
+    width: 1200
+    height: 1000
+
+# AI Analysis Configuration
+ai:
+  openai:
+    model: "gpt-4.1"
+    smart_model: "gpt-5"
+    summarization_model: "gpt-5-nano"
+    alternative_model: "gpt-4.1-mini"
+    max_completion_tokens: 4000  # Changed from max_tokens
+    temperature: 0.1
+  processing:
+    sleep_between_calls: 2
+    max_chars_per_chunk: 15000
+    max_retries: 3
+
+# Directory Configuration
+directories:
+  reports: "reports"
+  analysis_outputs: "analysis_outputs"
+  config: "config"
+  templates: "templates"
+
+# Output Configuration
+output:
+  formats: ["json", "markdown", "html", "pdf"]
+  file_naming:
+    summary: "{ticker}_{analysis_type}"
+    analysis: "{ticker}_{analysis_type}_analysis"
+
+# Analysis Types Configuration
+analysis_types:
+  stalwart:
+    name: "stalwart_10_years"
+    description: "Long-term analysis based on annual reports"
+    filings: ["10-K"]
+    period: 10
+  fastgrower:
+    name: "fastgrower_10_quarters"
+    description: "Recent performance analysis based on quarterly reports"
+    filings: ["10-Q", "10-K"]
+    quarters: 10
+    fastgrower_context_years: 3
