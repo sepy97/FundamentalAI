@@ -9,108 +9,100 @@ from xhtml2pdf import pisa
 load_dotenv()
 openai.api_key = os.getenv("OPENAI")
 
-# === CONFIG ===
-JSON_FILE = "fastgrower_summaries.json"
-MODEL = "gpt-4.1-mini"
-# ==============
-
-# Load summaries
-with open(JSON_FILE, "r") as f:
-    summaries = json.load(f)
-
-# Format summaries into readable text
-def format_summaries(summaries):
+# Format the report entries into readable text
+def format_summaries(reports):
     formatted = ""
-    for entry in sorted(summaries, key=lambda x: x["quarter"]):
-        quarter = entry["quarter"]
-        summary = entry["summary"]
-        formatted += f"\n\n==== {quarter} ====\n{summary.strip()}"
+    for entry in sorted(reports, key=lambda x: x.get("period", "")):
+        period = entry.get("period", "")
+        filing_type = entry.get("filing_type", "")
+        summary = entry.get("summary", "")
+        formatted += f"\n\n==== {period} ({filing_type}) ====\n{summary.strip()}"
     return formatted
 
-formatted_data = format_summaries(summaries)
+def main():
+    # === CONFIG ===
+    TICKER = "PFE"  # Change this to analyze a different company ticker
+    JSON_FILE = f"analysis_outputs/{TICKER.lower()}_fastgrower_10_quarters.json"
+    MODEL = "gpt-5-mini"
+    # ==============
 
-# Compose full prompt
-prompt = f"""
-You are analyzing a fast-growing company based on recent 10-K and 10-Q summaries (last 10 quarters). These include management discussions of growth, strategy, operations, and risks.
+    # Load summaries
+    with open(JSON_FILE, "r") as f:
+        data = json.load(f)
+        summaries = data.get("reports", [])
 
-Use this information to evaluate whether the company qualifies as a legitimate “fast-grower” with long-term upside.
+    # Format data
+    formatted_data = format_summaries(summaries)
 
----
+    # Compose prompt and send to OpenAI
+    prompt = f"""
+    You are analyzing a fast-growing company based on recent 10-K and 10-Q summaries (last 10 quarters). These include management discussions of growth, strategy, operations, and risks.
 
-1. **Growth Momentum**  
-   - Are quarterly earnings consistently increasing?
-   - Is profitability improving alongside revenue?
-   - Is growth accelerating, decelerating, or plateauing?
+    Use this information to evaluate whether the company qualifies as a legitimate “fast-grower” with long-term upside.
 
-2. **Expansion Quality & Market Fit**  
-   - Has the company proven success in more than one geography or vertical?
-   - Are expansion efforts scaling up (speed, repeatability)?
-   - Does the lead product significantly impact overall revenue?
+    ---
 
-3. **Scalability & Capital Discipline**  
-   - Is operating leverage emerging (margin improvement)?
-   - Is debt moderate and well-managed?
-   - Are they investing in scalable growth (not just advertising)?
+    1. **Growth Momentum**  
+       - Are quarterly earnings consistently increasing?
+       - Is profitability improving alongside revenue?
+       - Is growth accelerating, decelerating, or plateauing?
 
-4. **Moat Development & Visibility**  
-   - Is there evidence of a durable competitive edge (tech, brand, network)?
-   - Has Wall Street noticed this company yet (low analyst/institutional attention)?
+    2. **Expansion Quality & Market Fit**  
+       - Has the company proven success in more than one geography or vertical?
+       - Are expansion efforts scaling up (speed, repeatability)?
+       - Does the lead product significantly impact overall revenue?
 
----
+    3. **Scalability & Capital Discipline**  
+       - Is operating leverage emerging (margin improvement)?
+       - Is debt moderate and well-managed?
+       - Are they investing in scalable growth (not just advertising)?
 
-### 🚩 Check for SELL SIGNALS:
-- The company’s valuation (P/E > 30) is not justified by forward growth (<20%).
-- Company has become too recognizable (e.g., heavily advertised, media buzz).
-- Executive turnover is high.
-- Top-line growth is slowing, and profit guidance is reduced.
-- Analysts increasingly covering the stock; fast-grower phase may be ending.
+    4. **Moat Development & Visibility**  
+       - Is there evidence of a durable competitive edge (tech, brand, network)?
+       - Has Wall Street noticed this company yet (low analyst/institutional attention)?
 
----
+    ---
 
-### 🧠 Summary:
-- Is this still a **credible 5–10x fast-grower**?
-- What are the major **risks, turning points, or hype signals**?
-- Would you **Buy, Hold, or Avoid**?
+    ### 🚩 Check for SELL SIGNALS:
+    - The company’s valuation (P/E > 30) is not justified by forward growth (<20%).
+    - Company has become too recognizable (e.g., heavily advertised, media buzz).
+    - Executive turnover is high.
+    - Top-line growth is slowing, and profit guidance is reduced.
+    - Analysts increasingly covering the stock; fast-grower phase may be ending.
 
-Here is the input:
-{formatted_data}
-"""
+    ---
 
-# Send to OpenAI API
-response = openai.chat.completions.create(
-    model=MODEL,
-    messages=tuple([
-        {"role": "system", "content": "You are a financial analyst."},
-        {"role": "user", "content": prompt}
-    ]),  # type: ignore[arg-type]
-    temperature=0.7
-)
+    ### 🧠 Summary:
+    - Is this still a **credible 5–10x fast-grower**?
+    - What are the major **risks, turning points, or hype signals**?
+    - Would you **Buy, Hold, or Avoid**?
 
-# Output result
-analysis = response.choices[0].message.content
-print("\n====== FAST-GROWER QUALITATIVE ANALYSIS ======\n")
-print(analysis)
+    Here is the input:
+    {formatted_data}
+    """
+    response = openai.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {"role": "system", "content": "You are a financial analyst."},
+            {"role": "user", "content": prompt}
+        ],
+    )
+    analysis = response.choices[0].message.content
+    print("\n====== FAST-GROWER QUALITATIVE ANALYSIS ======\n")
+    print(analysis)
 
-# Save analysis to file
-output_file = "fastgrower_analysis.txt"
-with open(output_file, "w") as f:
-    f.write(analysis)
-    print(f"✅ Saved qualitative analysis to {output_file}")
+    # Save results
+    out_txt = f"{TICKER.lower()}_fastgrower_analysis.txt"
+    with open(out_txt, "w") as f:
+        f.write(analysis)
+    html = markdown.markdown(analysis, extensions=['extra'])
+    html_full = f"<html><head><meta charset='utf-8'></head><body>{html}</body></html>"
+    out_html = f"{TICKER.lower()}_fastgrower_analysis.html"
+    with open(out_html, "w", encoding="utf-8") as f:
+        f.write(html_full)
+    out_pdf = f"{TICKER.lower()}_fastgrower_analysis.pdf"
+    with open(out_pdf, "wb") as f:
+        pisa.CreatePDF(html_full, dest=f)
 
-# Automated Markdown to PDF conversion
-# Convert analysis markdown to HTML
-html = markdown.markdown(analysis, extensions=['extra'])
-html = f"<html><head><meta charset='utf-8'></head><body>{html}</body></html>"
-
-# Optional: save HTML for inspection
-with open("fastgrower_analysis.html", "w", encoding="utf-8") as f:
-    f.write(html)
-
-# Generate PDF from HTML
-pdf_file = "fastgrower_analysis.pdf"
-with open(pdf_file, "wb") as f:
-    pisa_status = pisa.CreatePDF(html, dest=f)
-if pisa_status.err:
-    print("❌ Failed to generate PDF")
-else:
-    print(f"✅ Saved qualitative analysis PDF to {pdf_file}")
+if __name__ == "__main__":
+    main()
